@@ -1,0 +1,92 @@
+version: '3.7'
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.35.0
+    container_name: prometheus
+    user: root
+    volumes:
+      - ./prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9090:9090"
+    entrypoint:
+      /bin/prometheus
+    restart: always
+    
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    user: "472"
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: always
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.3
+    container_name: elasticsearch
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+      xpack.security.enabled: false
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    healthcheck:
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:9200/
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  fluentd:
+    build: ./fluentd
+    container_name: fluentd
+    volumes:
+      - ./fluentd/conf:/fluentd/etc
+      - ./logs/myapp:/logs
+    ports:
+      - "24224:24224"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.3
+    container_name: kibana
+    environment:
+      discovery.type: "single-node"
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  server:
+    build: .
+    container_name: server
+    environment:
+      - TELEGRAM_TOKEN
+      - FLUENTD_HOST=fluentd
+      - FLUENTD_PORT
+      - SERVER_PORT
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      fluentd:
+        condition: service_started
+      kibana:
+        condition: service_started
+
+volumes:
+  prometheus_data: { }
+  grafana_data: { }
